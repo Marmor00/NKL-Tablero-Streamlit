@@ -227,6 +227,8 @@ def calcular_cierre(registros, ano, catalogo):
             'directo_indirecto': cat_info.get('directo_indirecto', ''),
             'fijo_variable': cat_info.get('fijo_variable', ''),
             'monto': reg['t_ingreso'] if es_ingreso else reg['t_egreso'],
+            'subtotal': reg['sub'],
+            'iva': reg['iva'],
         })
     return pd.DataFrame(filas) if filas else pd.DataFrame()
 
@@ -255,11 +257,58 @@ def pagina_general(registros, catalogo):
     resultado = total_ing - total_eg
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Ingresos", fmt(total_ing))
-    c2.metric("Egresos", fmt(total_eg))
+    c1.metric("Ingresos (Total)", fmt(total_ing))
+    c2.metric("Egresos (Total)", fmt(total_eg))
     c3.metric("Resultado", fmt(resultado),
               delta=f"{resultado/total_ing*100:.1f}%" if total_ing > 0 else None,
               delta_color="normal" if resultado >= 0 else "inverse")
+
+    # ── Desglose Subtotal / IVA ──
+    df_ing = df[df['tipo'] == 'Ingreso']
+    df_egr = df[df['tipo'] == 'Egreso']
+
+    sub_ing = df_ing['subtotal'].sum()
+    iva_ing = df_ing['iva'].sum()
+    sub_eg = df_egr['subtotal'].sum()
+    iva_eg = df_egr['iva'].sum()
+
+    st.subheader("Desglose: Subtotal e IVA")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("**Ingresos**")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Subtotal", fmt(sub_ing))
+        m2.metric("IVA", fmt(iva_ing))
+        m3.metric("Total", fmt(total_ing))
+    with col_b:
+        st.markdown("**Egresos**")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Subtotal", fmt(sub_eg))
+        m2.metric("IVA", fmt(iva_eg))
+        m3.metric("Total", fmt(total_eg))
+
+    # Tabla mensual de Subtotal / IVA / Total
+    with st.expander("Ver desglose mensual de Subtotal / IVA"):
+        filas_desg = []
+        for mes_num in sorted(df['mes'].unique()):
+            dm = df[df['mes'] == mes_num]
+            di = dm[dm['tipo'] == 'Ingreso']
+            de = dm[dm['tipo'] == 'Egreso']
+            filas_desg.append({
+                'Mes': MESES[mes_num - 1] if 1 <= mes_num <= 12 else '?',
+                'Ing. Subtotal': di['subtotal'].sum(),
+                'Ing. IVA': di['iva'].sum(),
+                'Ing. Total': di['monto'].sum(),
+                'Egr. Subtotal': de['subtotal'].sum(),
+                'Egr. IVA': de['iva'].sum(),
+                'Egr. Total': de['monto'].sum(),
+            })
+        df_desg = pd.DataFrame(filas_desg)
+        # Fila de totales
+        totales_desg = {col: df_desg[col].sum() if col != 'Mes' else 'TOTAL' for col in df_desg.columns}
+        df_desg = pd.concat([df_desg, pd.DataFrame([totales_desg])], ignore_index=True)
+        cols_fmt = {c: '${:,.2f}' for c in df_desg.columns if c != 'Mes'}
+        st.dataframe(df_desg.style.format(cols_fmt), use_container_width=True, hide_index=True)
 
     # ── Ingresos vs Egresos por mes ──
     st.subheader("Ingresos vs Egresos por mes")
