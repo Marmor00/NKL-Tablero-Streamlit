@@ -256,36 +256,28 @@ def pagina_general(registros, catalogo):
     total_eg = df[df['tipo'] == 'Egreso']['monto'].sum()
     resultado = total_ing - total_eg
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Ingresos (Total)", fmt(total_ing))
-    c2.metric("Egresos (Total)", fmt(total_eg))
-    c3.metric("Resultado", fmt(resultado),
-              delta=f"{resultado/total_ing*100:.1f}%" if total_ing > 0 else None,
-              delta_color="normal" if resultado >= 0 else "inverse")
-
-    # ── Desglose Subtotal / IVA ──
     df_ing = df[df['tipo'] == 'Ingreso']
     df_egr = df[df['tipo'] == 'Egreso']
-
     sub_ing = df_ing['subtotal'].sum()
     iva_ing = df_ing['iva'].sum()
     sub_eg = df_egr['subtotal'].sum()
     iva_eg = df_egr['iva'].sum()
 
-    st.subheader("Desglose: Subtotal e IVA")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown("**Ingresos**")
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Subtotal", fmt(sub_ing))
-        m2.metric("IVA", fmt(iva_ing))
-        m3.metric("Total", fmt(total_ing))
-    with col_b:
-        st.markdown("**Egresos**")
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Subtotal", fmt(sub_eg))
-        m2.metric("IVA", fmt(iva_eg))
-        m3.metric("Total", fmt(total_eg))
+    # Tabla resumen limpia en lugar de métricas apiladas
+    st.markdown("### Resumen del periodo")
+    resumen_data = pd.DataFrame({
+        '': ['Subtotal (sin IVA)', 'IVA', 'Total'],
+        'Ingresos': [fmt(sub_ing), fmt(iva_ing), fmt(total_ing)],
+        'Egresos': [fmt(sub_eg), fmt(iva_eg), fmt(total_eg)],
+        'Diferencia': [fmt(sub_ing - sub_eg), fmt(iva_ing - iva_eg), fmt(resultado)],
+    })
+    st.dataframe(resumen_data, use_container_width=True, hide_index=True)
+
+    c1, c2 = st.columns(2)
+    c1.metric("Resultado neto", fmt(resultado),
+              delta=f"{resultado/total_ing*100:.1f}%" if total_ing > 0 else None,
+              delta_color="normal" if resultado >= 0 else "inverse")
+    c2.metric("IVA neto (cobrado - pagado)", fmt(iva_ing - iva_eg))
 
     # Tabla mensual de Subtotal / IVA / Total
     with st.expander("Ver desglose mensual de Subtotal / IVA"):
