@@ -574,6 +574,182 @@ def pagina_nomina(df_nomina):
         )
 
 
+def pagina_auditoria(registros, catalogo):
+    st.header("Detalle / Auditoría de Transacciones")
+    st.caption("Aquí puedes ver línea por línea todas las transacciones que componen los totales del dashboard. Usa los filtros para verificar montos específicos.")
+
+    if not registros:
+        st.warning("No hay datos disponibles.")
+        return
+
+    # ── Construir DataFrame con todas las transacciones ──
+    filas = []
+    for reg in registros:
+        clasif = reg['clasificacion']
+        clasif_raw = reg['clasificacion_raw']
+
+        if clasif in CLASIFICACIONES_EXCLUIR:
+            tipo = 'Excluido'
+            categoria = clasif_raw
+        elif clasif in CLASIFICACIONES_INGRESO:
+            tipo = 'Ingreso'
+            categoria = CLASIFICACIONES_INGRESO[clasif]
+        else:
+            tipo = 'Egreso'
+            cat_info = catalogo.get(clasif, {})
+            categoria = cat_info.get('categoria_mayor', 'Sin catálogo')
+
+        monto_total = reg['t_ingreso'] if tipo == 'Ingreso' else (reg['t_egreso'] if tipo == 'Egreso' else reg['t_ingreso'] + reg['t_egreso'])
+
+        filas.append({
+            'Hoja': reg['hoja'],
+            'Fila': reg['fila'],
+            'Año': reg['ano'],
+            'Mes': reg['mes'],
+            'Mes nombre': MESES[reg['mes'] - 1] if 1 <= reg['mes'] <= 12 else '?',
+            'Orden': reg['orden'],
+            'Concepto': reg['concepto'],
+            'Clasificación': clasif_raw,
+            'Categoría': categoria,
+            'Tipo': tipo,
+            'Subtotal': reg['sub'],
+            'IVA': reg['iva'],
+            'Total': monto_total,
+        })
+
+    df_full = pd.DataFrame(filas)
+
+    # ── Filtros en sidebar ──
+    st.markdown("### Filtros")
+    fc1, fc2, fc3, fc4 = st.columns(4)
+
+    with fc1:
+        anos = sorted(df_full['Año'].unique())
+        ano_sel = st.multiselect("Año", anos,
+                                  default=[anos[-1]] if anos else [],
+                                  format_func=lambda x: f"20{x}")
+
+    with fc2:
+        meses_disponibles = sorted(df_full['Mes'].unique())
+        mes_sel = st.multiselect("Mes", meses_disponibles,
+                                  format_func=lambda x: MESES[x - 1] if 1 <= x <= 12 else f"Mes {x}")
+
+    with fc3:
+        tipo_sel = st.multiselect("Tipo", ['Ingreso', 'Egreso', 'Excluido'],
+                                   default=['Ingreso', 'Egreso'])
+
+    with fc4:
+        hojas_disp = sorted(df_full['Hoja'].unique())
+        hoja_sel = st.multiselect("Hoja (banco)", hojas_disp)
+
+    fc5, fc6 = st.columns(2)
+    with fc5:
+        clasifs = sorted(df_full['Clasificación'].unique())
+        clasif_sel = st.multiselect("Clasificación", clasifs)
+    with fc6:
+        cats = sorted(df_full['Categoría'].unique())
+        cat_sel = st.multiselect("Categoría mayor", cats)
+
+    busqueda = st.text_input("Buscar texto en concepto / clasificación / orden", "")
+
+    # ── Aplicar filtros ──
+    df = df_full.copy()
+    if ano_sel:
+        df = df[df['Año'].isin(ano_sel)]
+    if mes_sel:
+        df = df[df['Mes'].isin(mes_sel)]
+    if tipo_sel:
+        df = df[df['Tipo'].isin(tipo_sel)]
+    if hoja_sel:
+        df = df[df['Hoja'].isin(hoja_sel)]
+    if clasif_sel:
+        df = df[df['Clasificación'].isin(clasif_sel)]
+    if cat_sel:
+        df = df[df['Categoría'].isin(cat_sel)]
+    if busqueda:
+        b = busqueda.upper()
+        mask = (
+            df['Concepto'].str.upper().str.contains(b, na=False)
+            | df['Clasificación'].str.upper().str.contains(b, na=False)
+            | df['Orden'].str.upper().str.contains(b, na=False)
+        )
+        df = df[mask]
+
+    # ── Métricas con los totales filtrados ──
+    st.markdown("### Totales según filtros")
+    df_ing = df[df['Tipo'] == 'Ingreso']
+    df_egr = df[df['Tipo'] == 'Egreso']
+
+    resumen_filtro = pd.DataFrame({
+        '': ['Subtotal (sin IVA)', 'IVA', 'Total', '# Transacciones'],
+        'Ingresos': [
+            fmt(df_ing['Subtotal'].sum()),
+            fmt(df_ing['IVA'].sum()),
+            fmt(df_ing['Total'].sum()),
+            f"{len(df_ing)}",
+        ],
+        'Egresos': [
+            fmt(df_egr['Subtotal'].sum()),
+            fmt(df_egr['IVA'].sum()),
+            fmt(df_egr['Total'].sum()),
+            f"{len(df_egr)}",
+        ],
+    })
+    st.dataframe(resumen_filtro, use_container_width=True, hide_index=True)
+
+    st.caption(f"Mostrando **{len(df):,}** de {len(df_full):,} transacciones totales")
+
+    # ── Tabla de detalle ──
+    st.markdown("### Transacciones (línea por línea)")
+    df_show = df.sort_values(['Año', 'Mes', 'Hoja', 'Fila']).reset_index(drop=True)
+
+    # Botón de descarga CSV
+    csv = df_show.to_csv(index=False).encode('utf-8-sig')
+    st.download_button(
+        "⬇️ Descargar como CSV",
+        csv,
+        f"transacciones_filtradas.csv",
+        "text/csv"
+    )
+
+    st.dataframe(
+        df_show[['Hoja', 'Fila', 'Mes nombre', 'Año', 'Orden', 'Concepto',
+                 'Clasificación', 'Categoría', 'Tipo', 'Subtotal', 'IVA', 'Total']].style.format({
+            'Subtotal': '${:,.2f}',
+            'IVA': '${:,.2f}',
+            'Total': '${:,.2f}',
+        }),
+        use_container_width=True,
+        hide_index=True,
+        height=600,
+    )
+
+    # ── Resúmenes alternativos por agrupación ──
+    with st.expander("📊 Resumen agrupado (sumar montos por categoría)"):
+        agrupar_por = st.radio(
+            "Agrupar por:",
+            ['Clasificación', 'Categoría', 'Hoja', 'Mes nombre', 'Orden'],
+            horizontal=True,
+        )
+        if not df.empty:
+            agg = df.groupby(agrupar_por).agg(
+                Transacciones=('Total', 'count'),
+                Subtotal=('Subtotal', 'sum'),
+                IVA=('IVA', 'sum'),
+                Total=('Total', 'sum'),
+            ).reset_index().sort_values('Total', ascending=False)
+
+            st.dataframe(
+                agg.style.format({
+                    'Subtotal': '${:,.2f}',
+                    'IVA': '${:,.2f}',
+                    'Total': '${:,.2f}',
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
 # ─── MAIN ────────────────────────────────────────────────────────────────────
 
 def main():
@@ -586,6 +762,7 @@ def main():
         "📊 Vista General",
         "🏗️ Por Orden / Proyecto",
         "👷 Nómina",
+        "🔍 Detalle / Auditoría",
     ])
 
     if st.sidebar.button("🔄 Recargar datos"):
@@ -602,6 +779,8 @@ def main():
         pagina_ordenes(df_gastos, df_nomina)
     elif pagina == "👷 Nómina":
         pagina_nomina(df_nomina)
+    elif pagina == "🔍 Detalle / Auditoría":
+        pagina_auditoria(registros, catalogo)
 
 
 if __name__ == '__main__':
