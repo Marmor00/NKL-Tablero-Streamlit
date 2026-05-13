@@ -205,7 +205,13 @@ def cargar_datos():
 # ─── PROCESAMIENTO ───────────────────────────────────────────────────────────
 
 def calcular_cierre(registros, ano, catalogo):
-    """Calcula cierre mensual para un año."""
+    """Calcula cierre mensual para un año.
+
+    El tipo (Ingreso/Egreso) se determina por cuál columna del libro
+    diario tiene el monto (T INGRESO o T EGRESO), NO por la clasificación.
+    Esto evita errores con conceptos como 'OTROS INGRESOS' o 'VARIOS HSBC'
+    que pueden ser tanto ingresos (reembolsos) como egresos (cargos).
+    """
     filas = []
     for reg in registros:
         if reg['ano'] != ano:
@@ -214,19 +220,36 @@ def calcular_cierre(registros, ano, catalogo):
         if clasif in CLASIFICACIONES_EXCLUIR:
             continue
 
-        es_ingreso = clasif in CLASIFICACIONES_INGRESO
+        # Determinar el tipo por el monto, no por la clasificación
+        if reg['t_ingreso'] > 0 and reg['t_egreso'] == 0:
+            tipo = 'Ingreso'
+            monto = reg['t_ingreso']
+        elif reg['t_egreso'] > 0 and reg['t_ingreso'] == 0:
+            tipo = 'Egreso'
+            monto = reg['t_egreso']
+        elif reg['t_ingreso'] == 0 and reg['t_egreso'] == 0:
+            continue  # filas sin monto, se ignoran
+        else:
+            # caso raro: ambos > 0, prevalece el mayor
+            if reg['t_ingreso'] >= reg['t_egreso']:
+                tipo = 'Ingreso'
+                monto = reg['t_ingreso']
+            else:
+                tipo = 'Egreso'
+                monto = reg['t_egreso']
+
         cat_info = catalogo.get(clasif, {})
 
         filas.append({
             'mes': reg['mes'],
             'mes_nombre': MESES[reg['mes'] - 1] if 1 <= reg['mes'] <= 12 else '?',
             'clasificacion': reg['clasificacion_raw'],
-            'tipo': 'Ingreso' if es_ingreso else 'Egreso',
+            'tipo': tipo,
             'categoria': CLASIFICACIONES_INGRESO.get(clasif, cat_info.get('categoria_mayor', 'Otro')),
             'subcategoria': cat_info.get('subcategoria', reg['clasificacion_raw']),
             'directo_indirecto': cat_info.get('directo_indirecto', ''),
             'fijo_variable': cat_info.get('fijo_variable', ''),
-            'monto': reg['t_ingreso'] if es_ingreso else reg['t_egreso'],
+            'monto': monto,
             'subtotal': reg['sub'],
             'iva': reg['iva'],
         })
@@ -583,6 +606,8 @@ def pagina_auditoria(registros, catalogo):
         return
 
     # ── Construir DataFrame con todas las transacciones ──
+    # El tipo se determina por la columna del monto (T INGRESO o T EGRESO),
+    # NO por la clasificación.
     filas = []
     for reg in registros:
         clasif = reg['clasificacion']
@@ -591,15 +616,26 @@ def pagina_auditoria(registros, catalogo):
         if clasif in CLASIFICACIONES_EXCLUIR:
             tipo = 'Excluido'
             categoria = clasif_raw
-        elif clasif in CLASIFICACIONES_INGRESO:
-            tipo = 'Ingreso'
-            categoria = CLASIFICACIONES_INGRESO[clasif]
+            monto_total = reg['t_ingreso'] + reg['t_egreso']
         else:
-            tipo = 'Egreso'
             cat_info = catalogo.get(clasif, {})
-            categoria = cat_info.get('categoria_mayor', 'Sin catálogo')
+            categoria = CLASIFICACIONES_INGRESO.get(clasif, cat_info.get('categoria_mayor', 'Sin catálogo'))
 
-        monto_total = reg['t_ingreso'] if tipo == 'Ingreso' else (reg['t_egreso'] if tipo == 'Egreso' else reg['t_ingreso'] + reg['t_egreso'])
+            if reg['t_ingreso'] > 0 and reg['t_egreso'] == 0:
+                tipo = 'Ingreso'
+                monto_total = reg['t_ingreso']
+            elif reg['t_egreso'] > 0 and reg['t_ingreso'] == 0:
+                tipo = 'Egreso'
+                monto_total = reg['t_egreso']
+            elif reg['t_ingreso'] == 0 and reg['t_egreso'] == 0:
+                continue  # filas sin monto se ignoran
+            else:
+                if reg['t_ingreso'] >= reg['t_egreso']:
+                    tipo = 'Ingreso'
+                    monto_total = reg['t_ingreso']
+                else:
+                    tipo = 'Egreso'
+                    monto_total = reg['t_egreso']
 
         filas.append({
             'Hoja': reg['hoja'],
